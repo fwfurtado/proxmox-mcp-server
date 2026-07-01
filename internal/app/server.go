@@ -8,7 +8,6 @@ import (
 	"os"
 
 	"github.com/fwfurtado/proxmox-mcp-server/internal/proxmox"
-	"github.com/fwfurtado/proxmox-mcp-server/internal/tools"
 	"github.com/fwfurtado/proxmox-mcp-server/internal/tools/readonly"
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -37,7 +36,6 @@ func Run(ctx context.Context, config Config) error {
 	if config.AllowWrite {
 		return fmt.Errorf("read-write mode is not implemented yet; omit --allow-write to run read-only")
 	}
-	mode := tools.ModeReadOnly
 
 	if err := validateTransport(config.Transport); err != nil {
 		return err
@@ -55,18 +53,7 @@ func Run(ctx context.Context, config Config) error {
 		Version: "0.1.0",
 	}, nil)
 
-	allTools := []tools.Tool{
-		readonly.NewListNodesTool(proxmoxClient),
-		readonly.NewListVMsTool(proxmoxClient),
-		readonly.NewGetVMTool(proxmoxClient),
-	}
-
-	for _, tool := range tools.ForMode(mode, allTools) {
-		logger.Info("registering MCP tool", "name", tool.Name(), "mode", tool.Mode())
-		if err := tool.Register(server); err != nil {
-			return fmt.Errorf("register tool %q: %w", tool.Name(), err)
-		}
-	}
+	readonly.RegisterTools(server, proxmoxClient)
 
 	if err := runTransport(ctx, server, config, logger); err != nil {
 		return err
