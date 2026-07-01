@@ -3,6 +3,7 @@ package proxmox
 import (
 	"context"
 	"fmt"
+	"sort"
 	"time"
 
 	proxmoxlib "github.com/luthermonson/go-proxmox"
@@ -117,6 +118,148 @@ func (c *Client) GetVM(ctx context.Context, nodeName string, vmid int) (*VMDetai
 	return vmDetails(vm), nil
 }
 
+func (c *Client) ListContainers(ctx context.Context) ([]*Container, error) {
+	cluster, err := c.proxmox.Cluster(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("get cluster: %w", err)
+	}
+
+	resources, err := cluster.Resources(ctx, "vm")
+	if err != nil {
+		return nil, fmt.Errorf("list cluster container resources: %w", err)
+	}
+
+	containers := make([]*Container, 0, len(resources))
+	for _, resource := range resources {
+		if resource.Type != "lxc" {
+			continue
+		}
+
+		containers = append(containers, containerSummaryFromResource(resource))
+	}
+
+	return containers, nil
+}
+
+func (c *Client) GetContainer(ctx context.Context, nodeName string, vmid int) (*ContainerDetails, error) {
+	if nodeName == "" {
+		return nil, fmt.Errorf("node name is required")
+	}
+	if vmid <= 0 {
+		return nil, fmt.Errorf("vmid must be greater than zero")
+	}
+
+	node, err := c.proxmox.Node(ctx, nodeName)
+	if err != nil {
+		return nil, fmt.Errorf("get node %q: %w", nodeName, err)
+	}
+
+	container, err := node.Container(ctx, vmid)
+	if err != nil {
+		return nil, fmt.Errorf("get container %d on node %q: %w", vmid, nodeName, err)
+	}
+
+	return containerDetails(container), nil
+}
+
+func (c *Client) ListStorage(ctx context.Context) ([]*Storage, error) {
+	nodeStatuses, err := c.proxmox.Nodes(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list nodes for storage: %w", err)
+	}
+
+	storages := make([]*Storage, 0)
+	for _, nodeStatus := range nodeStatuses {
+		node, err := c.proxmox.Node(ctx, nodeStatus.Node)
+		if err != nil {
+			return nil, fmt.Errorf("get node %q for storage: %w", nodeStatus.Node, err)
+		}
+
+		nodeStorages, err := node.Storages(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("list storage on node %q: %w", nodeStatus.Node, err)
+		}
+
+		for _, storage := range nodeStorages {
+			storages = append(storages, storageSummary(storage))
+		}
+	}
+
+	return storages, nil
+}
+
+func (c *Client) ListTasks(ctx context.Context) ([]*Task, error) {
+	cluster, err := c.proxmox.Cluster(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("get cluster: %w", err)
+	}
+
+	tasks, err := cluster.Tasks(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list cluster tasks: %w", err)
+	}
+
+	return lo.Map(tasks, func(task *proxmoxlib.Task, _ int) *Task {
+		return taskSummary(task)
+	}), nil
+}
+
+func (c *Client) ListNodeTasks(ctx context.Context, nodeName string, limit int) ([]*Task, error) {
+	if nodeName == "" {
+		return nil, fmt.Errorf("node name is required")
+	}
+
+	node, err := c.proxmox.Node(ctx, nodeName)
+	if err != nil {
+		return nil, fmt.Errorf("get node %q: %w", nodeName, err)
+	}
+
+	opts := &proxmoxlib.NodeTasksOptions{}
+	if limit > 0 {
+		opts.Limit = limit
+	}
+
+	tasks, err := node.Tasks(ctx, opts)
+	if err != nil {
+		return nil, fmt.Errorf("list tasks on node %q: %w", nodeName, err)
+	}
+
+	return lo.Map(tasks, func(task *proxmoxlib.Task, _ int) *Task {
+		return taskSummary(task)
+	}), nil
+}
+
+func (c *Client) GetTask(ctx context.Context, upid string, logStart, logLimit int) (*TaskDetails, error) {
+	if upid == "" {
+		return nil, fmt.Errorf("upid is required")
+	}
+	if logStart < 0 {
+		return nil, fmt.Errorf("log_start must be greater than or equal to zero")
+	}
+	if logLimit <= 0 {
+		logLimit = 50
+	}
+
+	task := proxmoxlib.NewTask(proxmoxlib.UPID(upid), c.proxmox)
+	if task == nil || task.Node == "" {
+		return nil, fmt.Errorf("invalid upid %q", upid)
+	}
+
+	if err := task.Ping(ctx); err != nil {
+		return nil, fmt.Errorf("get task %q status: %w", upid, err)
+	}
+
+	logLines, err := task.Log(ctx, logStart, logLimit)
+	if err != nil {
+		return nil, fmt.Errorf("get task %q log: %w", upid, err)
+	}
+
+	return &TaskDetails{
+		Task: *taskSummary(task),
+		Log:  taskLogLines(logLines),
+	}, nil
+}
+
 func vmSummary(vm *proxmoxlib.VirtualMachine) *VM {
 	return &VM{
 		Node:     vm.Node,
@@ -174,4 +317,114 @@ func vmDetails(vm *proxmoxlib.VirtualMachine) *VMDetails {
 	}
 
 	return details
+}
+
+func containerSummary(container *proxmoxlib.Container) *Container {
+	return &Container{
+		Node:    container.Node,
+		VMID:    int(container.VMID),
+		Name:    container.Name,
+		Status:  container.Status,
+		CPUs:    container.CPUs,
+		MaxMem:  container.MaxMem,
+		MaxDisk: container.MaxDisk,
+		MaxSwap: container.MaxSwap,
+		Uptime:  container.Uptime,
+		Tags:    container.Tags,
+	}
+}
+
+func containerSummaryFromResource(resource *proxmoxlib.ClusterResource) *Container {
+	return &Container{
+		Node:    resource.Node,
+		VMID:    int(resource.VMID),
+		Name:    resource.Name,
+		Status:  resource.Status,
+		CPUs:    int(resource.MaxCPU),
+		MaxMem:  resource.MaxMem,
+		MaxDisk: resource.MaxDisk,
+		Uptime:  resource.Uptime,
+		Tags:    resource.Tags,
+	}
+}
+
+func containerDetails(container *proxmoxlib.Container) *ContainerDetails {
+	details := &ContainerDetails{
+		Container: *containerSummary(container),
+	}
+
+	if container.ContainerConfig != nil {
+		details.Config = &ContainerConfig{
+			Hostname:    container.ContainerConfig.Hostname,
+			Description: container.ContainerConfig.Description,
+			OSType:      container.ContainerConfig.OSType,
+			OnBoot:      bool(container.ContainerConfig.OnBoot),
+			Tags:        container.ContainerConfig.Tags,
+			RootFS:      container.ContainerConfig.RootFS,
+		}
+	}
+
+	return details
+}
+
+func storageSummary(storage *proxmoxlib.Storage) *Storage {
+	return &Storage{
+		Node:         storage.Node,
+		Name:         storage.Name,
+		Type:         storage.Type,
+		Content:      storage.Content,
+		Active:       storage.Active == 1,
+		Enabled:      storage.Enabled == 1,
+		Shared:       storage.Shared == 1,
+		UsedFraction: storage.UsedFraction,
+		Avail:        storage.Avail,
+		Used:         storage.Used,
+		Total:        storage.Total,
+	}
+}
+
+func taskSummary(task *proxmoxlib.Task) *Task {
+	summary := &Task{
+		UPID:         string(task.UPID),
+		ID:           task.ID,
+		Type:         task.Type,
+		User:         task.User,
+		Status:       task.Status,
+		Node:         task.Node,
+		PID:          task.PID,
+		PStart:       task.PStart,
+		Saved:        task.Saved,
+		ExitStatus:   task.ExitStatus,
+		IsCompleted:  task.IsCompleted,
+		IsRunning:    task.IsRunning,
+		IsFailed:     task.IsFailed,
+		IsSuccessful: task.IsSuccessful,
+	}
+
+	if !task.StartTime.IsZero() {
+		summary.StartTimeSec = task.StartTime.Unix()
+	}
+	if !task.EndTime.IsZero() {
+		summary.EndTimeSec = task.EndTime.Unix()
+	}
+	if task.Duration > 0 {
+		summary.DurationSec = int64(task.Duration / time.Second)
+	}
+
+	return summary
+}
+
+func taskLogLines(log proxmoxlib.Log) []string {
+	lines := make([]int, 0, len(log))
+	for line := range log {
+		lines = append(lines, line)
+	}
+	sort.Ints(lines)
+
+	result := make([]string, 0, len(lines))
+	for _, line := range lines {
+		result = append(result, log[line])
+	}
+
+	return result
 }

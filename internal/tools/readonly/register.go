@@ -18,4 +18,19 @@ func RegisterTools(server *sdkmcp.Server, client *proxmox.Client) {
 
 	logger.Info("registering MCP tool", "name", "get_vm", "mode", "read-only")
 	registerGetVMTool(server, client)
+
+	logger.Info("registering MCP tool", "name", "list_containers", "mode", "read-only")
+	registerListContainersTool(server, client)
+
+	logger.Info("registering MCP tool", "name", "get_container", "mode", "read-only")
+	registerGetContainerTool(server, client)
+
+	logger.Info("registering MCP tool", "name", "list_storage", "mode", "read-only")
+	registerListStorageTool(server, client)
+
+	logger.Info("registering MCP tool", "name", "list_tasks", "mode", "read-only")
+	registerListTasksTool(server, client)
+
+	logger.Info("registering MCP tool", "name", "get_task", "mode", "read-only")
+	registerGetTaskTool(server, client)
 }
