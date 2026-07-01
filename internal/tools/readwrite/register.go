@@ -4,29 +4,38 @@ import (
 	"log/slog"
 
 	"github.com/fwfurtado/proxmox-mcp-server/internal/proxmox"
+	"github.com/fwfurtado/proxmox-mcp-server/internal/tools"
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-func RegisterTools(server *sdkmcp.Server, client *proxmox.Client) {
+type toolRegistration struct {
+	name     string
+	register func(*sdkmcp.Server, *proxmox.Client)
+}
+
+func RegisterTools(server *sdkmcp.Server, client *proxmox.Client, allowlist []string) {
 	logger := slog.Default()
+	allowed := tools.NewAllowlist(allowlist)
 
-	logger.Info("registering MCP tool", "name", "start_vm", "mode", "read-write")
-	registerStartVMTool(server, client)
-	logger.Info("registering MCP tool", "name", "stop_vm", "mode", "read-write")
-	registerStopVMTool(server, client)
-	logger.Info("registering MCP tool", "name", "shutdown_vm", "mode", "read-write")
-	registerShutdownVMTool(server, client)
-	logger.Info("registering MCP tool", "name", "reboot_vm", "mode", "read-write")
-	registerRebootVMTool(server, client)
-	logger.Info("registering MCP tool", "name", "reset_vm", "mode", "read-write")
-	registerResetVMTool(server, client)
+	tools := []toolRegistration{
+		{name: "start_vm", register: registerStartVMTool},
+		{name: "stop_vm", register: registerStopVMTool},
+		{name: "shutdown_vm", register: registerShutdownVMTool},
+		{name: "reboot_vm", register: registerRebootVMTool},
+		{name: "reset_vm", register: registerResetVMTool},
+		{name: "start_container", register: registerStartContainerTool},
+		{name: "stop_container", register: registerStopContainerTool},
+		{name: "shutdown_container", register: registerShutdownContainerTool},
+		{name: "reboot_container", register: registerRebootContainerTool},
+	}
 
-	logger.Info("registering MCP tool", "name", "start_container", "mode", "read-write")
-	registerStartContainerTool(server, client)
-	logger.Info("registering MCP tool", "name", "stop_container", "mode", "read-write")
-	registerStopContainerTool(server, client)
-	logger.Info("registering MCP tool", "name", "shutdown_container", "mode", "read-write")
-	registerShutdownContainerTool(server, client)
-	logger.Info("registering MCP tool", "name", "reboot_container", "mode", "read-write")
-	registerRebootContainerTool(server, client)
+	for _, tool := range tools {
+		if !allowed.Allows(tool.name) {
+			logger.Info("skipping MCP tool", "name", tool.name, "mode", "read-write", "reason", "not in allowlist")
+			continue
+		}
+
+		logger.Info("registering MCP tool", "name", tool.name, "mode", "read-write")
+		tool.register(server, client)
+	}
 }

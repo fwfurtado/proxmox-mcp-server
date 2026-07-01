@@ -19,11 +19,13 @@ const (
 )
 
 type Config struct {
-	AllowWrite bool
-	Transport  string
-	HTTPAddr   string
-	Proxmox    proxmox.Config
-	Logger     *slog.Logger
+	AllowWrite             bool
+	Transport              string
+	HTTPAddr               string
+	ReadOnlyToolAllowlist  []string
+	ReadWriteToolAllowlist []string
+	Proxmox                proxmox.Config
+	Logger                 *slog.Logger
 }
 
 func Run(ctx context.Context, config Config) error {
@@ -50,9 +52,9 @@ func Run(ctx context.Context, config Config) error {
 		Version: "0.1.0",
 	}, nil)
 
-	readonly.RegisterTools(server, proxmoxClient)
+	readonly.RegisterTools(server, proxmoxClient, config.ReadOnlyToolAllowlist)
 	if config.AllowWrite {
-		readwrite.RegisterTools(server, proxmoxClient)
+		readwrite.RegisterTools(server, proxmoxClient, config.ReadWriteToolAllowlist)
 	}
 
 	if err := runTransport(ctx, server, config, logger); err != nil {

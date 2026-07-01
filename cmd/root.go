@@ -26,6 +26,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 
 	"github.com/fwfurtado/proxmox-mcp-server/internal/app"
@@ -36,6 +37,8 @@ import (
 var allowWrite bool
 var transport string
 var httpAddr string
+var readOnlyTools string
+var readWriteTools string
 var proxmoxConfig proxmox.Config
 
 // rootCmd represents the base command when called without any subcommands
@@ -63,6 +66,8 @@ func init() {
 	rootCmd.PersistentFlags().BoolVar(&allowWrite, "allow-write", false, "enable mutating (read-write) tools; read-only is the default (env: MCP_ALLOW_WRITE)")
 	rootCmd.PersistentFlags().StringVar(&transport, "transport", app.TransportStdio, "MCP transport: stdio or streamable-http (env: MCP_TRANSPORT)")
 	rootCmd.PersistentFlags().StringVar(&httpAddr, "http-addr", ":8080", "listen address for streamable-http transport (env: MCP_HTTP_ADDR)")
+	rootCmd.PersistentFlags().StringVar(&readOnlyTools, "readonly-tools", "", "comma-separated allow list of read-only tools to register; empty means all (env: MCP_READONLY_TOOLS)")
+	rootCmd.PersistentFlags().StringVar(&readWriteTools, "readwrite-tools", "", "comma-separated allow list of read-write tools to register; empty means all (env: MCP_READWRITE_TOOLS)")
 	rootCmd.PersistentFlags().StringVar(&proxmoxConfig.URL, "proxmox-url", "", "Proxmox API URL (env: PROXMOX_URL)")
 	rootCmd.PersistentFlags().StringVar(&proxmoxConfig.TokenID, "proxmox-token-id", "", "Proxmox API token ID, for example root@pam!mcp (env: PROXMOX_TOKEN_ID)")
 	rootCmd.PersistentFlags().StringVar(&proxmoxConfig.TokenSecret, "proxmox-token-secret", "", "Proxmox API token secret (env: PROXMOX_TOKEN_SECRET)")
@@ -71,10 +76,12 @@ func init() {
 
 func runServer(cmd *cobra.Command) error {
 	return app.Run(cmd.Context(), app.Config{
-		AllowWrite: boolFlagFromEnv(cmd, "allow-write", allowWrite, "MCP_ALLOW_WRITE"),
-		Transport:  stringFlagFromEnv(cmd, "transport", transport, "MCP_TRANSPORT"),
-		HTTPAddr:   stringFlagFromEnv(cmd, "http-addr", httpAddr, "MCP_HTTP_ADDR"),
-		Proxmox:    proxmoxConfigFromEnv(proxmoxConfig),
+		AllowWrite:             boolFlagFromEnv(cmd, "allow-write", allowWrite, "MCP_ALLOW_WRITE"),
+		Transport:              stringFlagFromEnv(cmd, "transport", transport, "MCP_TRANSPORT"),
+		HTTPAddr:               stringFlagFromEnv(cmd, "http-addr", httpAddr, "MCP_HTTP_ADDR"),
+		ReadOnlyToolAllowlist:  csvFlagFromEnv(cmd, "readonly-tools", readOnlyTools, "MCP_READONLY_TOOLS"),
+		ReadWriteToolAllowlist: csvFlagFromEnv(cmd, "readwrite-tools", readWriteTools, "MCP_READWRITE_TOOLS"),
+		Proxmox:                proxmoxConfigFromEnv(proxmoxConfig),
 	})
 }
 
@@ -116,4 +123,30 @@ func stringFlagFromEnv(cmd *cobra.Command, flagName, value, envName string) stri
 	}
 
 	return value
+}
+
+func csvFlagFromEnv(cmd *cobra.Command, flagName, value, envName string) []string {
+	return parseCSVAllowList(stringFlagFromEnv(cmd, flagName, value, envName))
+}
+
+func parseCSVAllowList(value string) []string {
+	if value == "" {
+		return nil
+	}
+
+	parts := strings.Split(value, ",")
+	allowlist := make([]string, 0, len(parts))
+	for _, part := range parts {
+		item := strings.TrimSpace(part)
+		if item == "" {
+			continue
+		}
+		allowlist = append(allowlist, item)
+	}
+
+	if len(allowlist) == 0 {
+		return nil
+	}
+
+	return allowlist
 }

@@ -4,48 +4,42 @@ import (
 	"log/slog"
 
 	"github.com/fwfurtado/proxmox-mcp-server/internal/proxmox"
+	"github.com/fwfurtado/proxmox-mcp-server/internal/tools"
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-func RegisterTools(server *sdkmcp.Server, client *proxmox.Client) {
+type toolRegistration struct {
+	name     string
+	register func(*sdkmcp.Server, *proxmox.Client)
+}
+
+func RegisterTools(server *sdkmcp.Server, client *proxmox.Client, allowlist []string) {
 	logger := slog.Default()
+	allowed := tools.NewAllowlist(allowlist)
 
-	logger.Info("registering MCP tool", "name", "list_nodes", "mode", "read-only")
-	registerListNodesTool(server, client)
+	tools := []toolRegistration{
+		{name: "list_nodes", register: registerListNodesTool},
+		{name: "list_vms", register: registerListVMsTool},
+		{name: "get_vm", register: registerGetVMTool},
+		{name: "get_vm_config", register: registerGetVMConfigTool},
+		{name: "list_containers", register: registerListContainersTool},
+		{name: "get_container", register: registerGetContainerTool},
+		{name: "list_storage", register: registerListStorageTool},
+		{name: "list_tasks", register: registerListTasksTool},
+		{name: "get_task", register: registerGetTaskTool},
+		{name: "list_snapshots", register: registerListSnapshotsTool},
+		{name: "list_networks", register: registerListNetworksTool},
+		{name: "list_node_networks", register: registerListNodeNetworksTool},
+		{name: "list_cluster_resources", register: registerListClusterResourcesTool},
+	}
 
-	logger.Info("registering MCP tool", "name", "list_vms", "mode", "read-only")
-	registerListVMsTool(server, client)
+	for _, tool := range tools {
+		if !allowed.Allows(tool.name) {
+			logger.Info("skipping MCP tool", "name", tool.name, "mode", "read-only", "reason", "not in allowlist")
+			continue
+		}
 
-	logger.Info("registering MCP tool", "name", "get_vm", "mode", "read-only")
-	registerGetVMTool(server, client)
-
-	logger.Info("registering MCP tool", "name", "get_vm_config", "mode", "read-only")
-	registerGetVMConfigTool(server, client)
-
-	logger.Info("registering MCP tool", "name", "list_containers", "mode", "read-only")
-	registerListContainersTool(server, client)
-
-	logger.Info("registering MCP tool", "name", "get_container", "mode", "read-only")
-	registerGetContainerTool(server, client)
-
-	logger.Info("registering MCP tool", "name", "list_storage", "mode", "read-only")
-	registerListStorageTool(server, client)
-
-	logger.Info("registering MCP tool", "name", "list_tasks", "mode", "read-only")
-	registerListTasksTool(server, client)
-
-	logger.Info("registering MCP tool", "name", "get_task", "mode", "read-only")
-	registerGetTaskTool(server, client)
-
-	logger.Info("registering MCP tool", "name", "list_snapshots", "mode", "read-only")
-	registerListSnapshotsTool(server, client)
-
-	logger.Info("registering MCP tool", "name", "list_networks", "mode", "read-only")
-	registerListNetworksTool(server, client)
-
-	logger.Info("registering MCP tool", "name", "list_node_networks", "mode", "read-only")
-	registerListNodeNetworksTool(server, client)
-
-	logger.Info("registering MCP tool", "name", "list_cluster_resources", "mode", "read-only")
-	registerListClusterResourcesTool(server, client)
+		logger.Info("registering MCP tool", "name", tool.name, "mode", "read-only")
+		tool.register(server, client)
+	}
 }

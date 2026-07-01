@@ -72,6 +72,60 @@ func TestStringFlagFromEnv(t *testing.T) {
 	})
 }
 
+func TestCSVFlagFromEnv(t *testing.T) {
+	t.Run("uses flag value when flag changed", func(t *testing.T) {
+		cmd := &cobra.Command{}
+		cmd.Flags().String("readonly-tools", "", "")
+		if err := cmd.Flags().Set("readonly-tools", "list_vms,get_vm"); err != nil {
+			t.Fatalf("set flag: %v", err)
+		}
+		t.Setenv("MCP_READONLY_TOOLS", "list_nodes")
+
+		got := csvFlagFromEnv(cmd, "readonly-tools", "list_vms,get_vm", "MCP_READONLY_TOOLS")
+		if len(got) != 2 || got[0] != "list_vms" || got[1] != "get_vm" {
+			t.Fatalf("unexpected allowlist: %#v", got)
+		}
+	})
+
+	t.Run("uses env value when flag unchanged", func(t *testing.T) {
+		cmd := &cobra.Command{}
+		cmd.Flags().String("readonly-tools", "", "")
+		t.Setenv("MCP_READONLY_TOOLS", "list_nodes, get_vm")
+
+		got := csvFlagFromEnv(cmd, "readonly-tools", "", "MCP_READONLY_TOOLS")
+		if len(got) != 2 || got[0] != "list_nodes" || got[1] != "get_vm" {
+			t.Fatalf("unexpected allowlist: %#v", got)
+		}
+	})
+}
+
+func TestParseCSVAllowList(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  []string
+	}{
+		{name: "empty", input: "", want: nil},
+		{name: "single", input: "list_vms", want: []string{"list_vms"}},
+		{name: "multiple with spaces", input: "list_vms, get_vm , list_nodes", want: []string{"list_vms", "get_vm", "list_nodes"}},
+		{name: "ignores empties", input: "list_vms,, ,get_vm", want: []string{"list_vms", "get_vm"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := parseCSVAllowList(tt.input)
+			if len(got) != len(tt.want) {
+				t.Fatalf("expected %d items, got %d: %#v", len(tt.want), len(got), got)
+			}
+			for i := range tt.want {
+				if got[i] != tt.want[i] {
+					t.Fatalf("expected %#v, got %#v", tt.want, got)
+				}
+			}
+		})
+	}
+}
+
 func TestProxmoxConfigFromEnv(t *testing.T) {
 	t.Setenv("PROXMOX_URL", "https://pve.example.com")
 	t.Setenv("PROXMOX_TOKEN_ID", "root@pam!mcp")
