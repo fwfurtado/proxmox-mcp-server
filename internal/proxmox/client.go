@@ -74,26 +74,23 @@ func (c *Client) ListNodes(ctx context.Context) ([]*Node, error) {
 }
 
 func (c *Client) ListVMs(ctx context.Context) ([]*VM, error) {
-	nodes, err := c.ListNodes(ctx)
+	cluster, err := c.proxmox.Cluster(ctx)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("get cluster: %w", err)
 	}
 
-	vms := make([]*VM, 0)
-	for _, nodeStatus := range nodes {
-		node, err := c.proxmox.Node(ctx, nodeStatus.Node)
-		if err != nil {
-			return nil, fmt.Errorf("get node %q: %w", nodeStatus.Node, err)
+	resources, err := cluster.Resources(ctx, "vm")
+	if err != nil {
+		return nil, fmt.Errorf("list cluster VM resources: %w", err)
+	}
+
+	vms := make([]*VM, 0, len(resources))
+	for _, resource := range resources {
+		if resource.Type != "qemu" {
+			continue
 		}
 
-		nodeVMs, err := node.VirtualMachines(ctx)
-		if err != nil {
-			return nil, fmt.Errorf("list VMs on node %q: %w", nodeStatus.Node, err)
-		}
-
-		for _, vm := range nodeVMs {
-			vms = append(vms, vmSummary(vm))
-		}
+		vms = append(vms, vmSummaryFromResource(resource))
 	}
 
 	return vms, nil
@@ -135,6 +132,24 @@ func vmSummary(vm *proxmoxlib.VirtualMachine) *VM {
 		Uptime:   vm.Uptime,
 		Template: bool(vm.Template),
 		Tags:     vm.Tags,
+	}
+}
+
+func vmSummaryFromResource(resource *proxmoxlib.ClusterResource) *VM {
+	return &VM{
+		Node:     resource.Node,
+		VMID:     int(resource.VMID),
+		Name:     resource.Name,
+		Status:   resource.Status,
+		CPUs:     int(resource.MaxCPU),
+		CPU:      resource.CPU,
+		Memory:   resource.Mem,
+		MaxMem:   resource.MaxMem,
+		Disk:     resource.Disk,
+		MaxDisk:  resource.MaxDisk,
+		Uptime:   resource.Uptime,
+		Template: resource.Template == 1,
+		Tags:     resource.Tags,
 	}
 }
 

@@ -22,15 +22,18 @@ THE SOFTWARE.
 package cmd
 
 import (
+	"context"
 	"os"
+	"os/signal"
 	"strconv"
+	"syscall"
 
 	"github.com/fwfurtado/proxmox-mcp-server/internal/app"
 	"github.com/fwfurtado/proxmox-mcp-server/internal/proxmox"
 	"github.com/spf13/cobra"
 )
 
-var readOnly bool
+var allowWrite bool
 var transport string
 var httpAddr string
 var proxmoxConfig proxmox.Config
@@ -48,14 +51,16 @@ var rootCmd = &cobra.Command{
 // Execute adds all child commands to the root command and sets flags appropriately.
 // This is called by main.main(). It only needs to happen once to the rootCmd.
 func Execute() {
-	err := rootCmd.Execute()
-	if err != nil {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	if err := rootCmd.ExecuteContext(ctx); err != nil {
 		os.Exit(1)
 	}
 }
 
 func init() {
-	rootCmd.PersistentFlags().BoolVar(&readOnly, "read-only", false, "start the MCP server with only read-only tools enabled")
+	rootCmd.PersistentFlags().BoolVar(&allowWrite, "allow-write", false, "enable mutating (read-write) tools; read-only is the default (env: MCP_ALLOW_WRITE)")
 	rootCmd.PersistentFlags().StringVar(&transport, "transport", app.TransportStdio, "MCP transport: stdio or streamable-http (env: MCP_TRANSPORT)")
 	rootCmd.PersistentFlags().StringVar(&httpAddr, "http-addr", ":8080", "listen address for streamable-http transport (env: MCP_HTTP_ADDR)")
 	rootCmd.PersistentFlags().StringVar(&proxmoxConfig.URL, "proxmox-url", "", "Proxmox API URL (env: PROXMOX_URL)")
@@ -66,11 +71,22 @@ func init() {
 
 func runServer(cmd *cobra.Command) error {
 	return app.Run(cmd.Context(), app.Config{
-		ReadOnly:  readOnly,
-		Transport: stringFlagFromEnv(cmd, "transport", transport, "MCP_TRANSPORT"),
-		HTTPAddr:  stringFlagFromEnv(cmd, "http-addr", httpAddr, "MCP_HTTP_ADDR"),
-		Proxmox:   proxmoxConfigFromEnv(proxmoxConfig),
+		AllowWrite: boolFlagFromEnv(cmd, "allow-write", allowWrite, "MCP_ALLOW_WRITE"),
+		Transport:  stringFlagFromEnv(cmd, "transport", transport, "MCP_TRANSPORT"),
+		HTTPAddr:   stringFlagFromEnv(cmd, "http-addr", httpAddr, "MCP_HTTP_ADDR"),
+		Proxmox:    proxmoxConfigFromEnv(proxmoxConfig),
 	})
+}
+
+func boolFlagFromEnv(cmd *cobra.Command, flagName string, value bool, envName string) bool {
+	if cmd.Flags().Changed(flagName) {
+		return value
+	}
+	if envValue, err := strconv.ParseBool(os.Getenv(envName)); err == nil {
+		return envValue
+	}
+
+	return value
 }
 
 func proxmoxConfigFromEnv(config proxmox.Config) proxmox.Config {

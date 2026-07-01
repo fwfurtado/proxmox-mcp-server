@@ -19,11 +19,11 @@ const (
 )
 
 type Config struct {
-	ReadOnly  bool
-	Transport string
-	HTTPAddr  string
-	Proxmox   proxmox.Config
-	Logger    *slog.Logger
+	AllowWrite bool
+	Transport  string
+	HTTPAddr   string
+	Proxmox    proxmox.Config
+	Logger     *slog.Logger
 }
 
 func Run(ctx context.Context, config Config) error {
@@ -32,11 +32,13 @@ func Run(ctx context.Context, config Config) error {
 		logger = slog.New(slog.NewTextHandler(os.Stderr, nil))
 	}
 
-	logger.Info("starting proxmox MCP server", "read_only", config.ReadOnly, "transport", config.Transport)
+	logger.Info("starting proxmox MCP server", "allow_write", config.AllowWrite, "transport", config.Transport)
 
-	if !config.ReadOnly {
-		return fmt.Errorf("non-read-only mode is not implemented yet; run with --read-only")
+	if config.AllowWrite {
+		return fmt.Errorf("read-write mode is not implemented yet; omit --allow-write to run read-only")
 	}
+	mode := tools.ModeReadOnly
+
 	if err := validateTransport(config.Transport); err != nil {
 		return err
 	}
@@ -59,7 +61,7 @@ func Run(ctx context.Context, config Config) error {
 		readonly.NewGetVMTool(proxmoxClient),
 	}
 
-	for _, tool := range tools.ForMode(tools.ModeReadOnly, allTools) {
+	for _, tool := range tools.ForMode(mode, allTools) {
 		logger.Info("registering MCP tool", "name", tool.Name(), "mode", tool.Mode())
 		if err := tool.Register(server); err != nil {
 			return fmt.Errorf("register tool %q: %w", tool.Name(), err)

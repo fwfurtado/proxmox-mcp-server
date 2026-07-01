@@ -1,5 +1,5 @@
 repository := "ofwfurtado"
-image := "proxmox-mcp-server:latest"
+image := "proxmox-mcp-server"
 
 
 @build:

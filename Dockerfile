@@ -1,4 +1,4 @@
-FROM golang:1.26-alpine AS build
+FROM golang:1.26.4-alpine AS build
 
 WORKDIR /src
 
@@ -10,8 +10,12 @@ RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/proxmox
 
 FROM alpine:3.22
 
-RUN apk add --no-cache ca-certificates
+RUN apk add --no-cache ca-certificates \
+	&& addgroup -S app \
+	&& adduser -S -G app app
 
 COPY --from=build /out/proxmox-mcp-server /usr/local/bin/proxmox-mcp-server
+
+USER app
 
 ENTRYPOINT ["proxmox-mcp-server"]
