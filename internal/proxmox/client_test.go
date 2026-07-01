@@ -136,6 +136,25 @@ func TestVMDetailsWithoutConfig(t *testing.T) {
 	}
 }
 
+func TestVMSnapshotSummary(t *testing.T) {
+	snapshot := &proxmoxlib.VirtualMachineSnapshot{
+		Node:        "pve01",
+		VMID:        101,
+		Name:        "snap1",
+		Description: "before update",
+		Parent:      "base",
+		Snaptime:    1234,
+		Vmstate:     1,
+		Snapstate:   "prepare",
+	}
+
+	got := vmSnapshotSummary(snapshot)
+
+	if got.Kind != "vm" || got.Name != "snap1" || !got.VMState {
+		t.Fatalf("unexpected VM snapshot summary: %+v", got)
+	}
+}
+
 func TestContainerSummary(t *testing.T) {
 	container := &proxmoxlib.Container{
 		Node:    "pve01",
@@ -206,6 +225,23 @@ func TestContainerDetails(t *testing.T) {
 	}
 }
 
+func TestContainerSnapshotSummary(t *testing.T) {
+	snapshot := &proxmoxlib.ContainerSnapshot{
+		Node:                 "pve01",
+		VMID:                 201,
+		Name:                 "snap1",
+		Description:          "before upgrade",
+		Parent:               "base",
+		SnapshotCreationTime: 5678,
+	}
+
+	got := containerSnapshotSummary(snapshot)
+
+	if got.Kind != "container" || got.Name != "snap1" || got.SnapTimeSec != 5678 {
+		t.Fatalf("unexpected container snapshot summary: %+v", got)
+	}
+}
+
 func TestStorageSummary(t *testing.T) {
 	storage := &proxmoxlib.Storage{
 		Node:         "pve01",
@@ -225,6 +261,55 @@ func TestStorageSummary(t *testing.T) {
 
 	if got.Name != "local-lvm" || !got.Active || !got.Enabled || got.Shared {
 		t.Fatalf("unexpected storage summary: %+v", got)
+	}
+}
+
+func TestNetworkSummary(t *testing.T) {
+	network := &proxmoxlib.NodeNetwork{
+		Node:            "pve01",
+		Iface:           "vmbr0",
+		Type:            "bridge",
+		Active:          proxmoxlib.StringOrInt(1),
+		Autostart:       1,
+		Address:         "10.0.0.2",
+		BridgePorts:     "eno1",
+		BridgeVLANAware: 1,
+		VLANID:          "100",
+		Method:          "static",
+	}
+
+	got := networkSummary(network)
+
+	if got.Node != "pve01" || got.Iface != "vmbr0" || !got.Active || !got.Autostart || !got.BridgeVLANAware {
+		t.Fatalf("unexpected network summary: %+v", got)
+	}
+}
+
+func TestClusterResourceSummary(t *testing.T) {
+	resource := &proxmoxlib.ClusterResource{
+		ID:         "qemu/101",
+		Type:       "qemu",
+		Node:       "pve01",
+		VMID:       101,
+		Name:       "app-01",
+		Status:     "running",
+		Pool:       "prod",
+		CPU:        0.2,
+		MaxCPU:     4,
+		Mem:        2048,
+		MaxMem:     4096,
+		Disk:       1024,
+		MaxDisk:    8192,
+		Uptime:     100,
+		Template:   1,
+		Tags:       "prod",
+		PluginType: "qemu",
+	}
+
+	got := clusterResourceSummary(resource)
+
+	if got.ID != "qemu/101" || got.VMID != 101 || !got.Template {
+		t.Fatalf("unexpected cluster resource summary: %+v", got)
 	}
 }
 
@@ -284,5 +369,14 @@ func TestGetTaskValidatesInput(t *testing.T) {
 	_, err = client.GetTask(context.Background(), "UPID:pve", -1, 50)
 	if err == nil || err.Error() != "log_start must be greater than or equal to zero" {
 		t.Fatalf("expected log_start validation error, got %v", err)
+	}
+}
+
+func TestGetVMConfigValidatesInput(t *testing.T) {
+	client := &Client{}
+
+	_, err := client.GetVMConfig(context.Background(), "", 101)
+	if err == nil || err.Error() != "node name is required" {
+		t.Fatalf("expected node name validation error, got %v", err)
 	}
 }

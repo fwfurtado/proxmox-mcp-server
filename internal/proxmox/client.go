@@ -118,6 +118,18 @@ func (c *Client) GetVM(ctx context.Context, nodeName string, vmid int) (*VMDetai
 	return vmDetails(vm), nil
 }
 
+func (c *Client) GetVMConfig(ctx context.Context, nodeName string, vmid int) (*VMConfig, error) {
+	vm, err := c.GetVM(ctx, nodeName, vmid)
+	if err != nil {
+		return nil, err
+	}
+	if vm.Config == nil {
+		return nil, fmt.Errorf("VM %d on node %q has no config available", vmid, nodeName)
+	}
+
+	return vm.Config, nil
+}
+
 func (c *Client) ListContainers(ctx context.Context) ([]*Container, error) {
 	cluster, err := c.proxmox.Cluster(ctx)
 	if err != nil {
@@ -162,6 +174,56 @@ func (c *Client) GetContainer(ctx context.Context, nodeName string, vmid int) (*
 	return containerDetails(container), nil
 }
 
+func (c *Client) ListSnapshots(ctx context.Context, kind, nodeName string, vmid int) ([]*Snapshot, error) {
+	if nodeName == "" {
+		return nil, fmt.Errorf("node name is required")
+	}
+	if vmid <= 0 {
+		return nil, fmt.Errorf("vmid must be greater than zero")
+	}
+	if kind == "" {
+		kind = "vm"
+	}
+
+	node, err := c.proxmox.Node(ctx, nodeName)
+	if err != nil {
+		return nil, fmt.Errorf("get node %q: %w", nodeName, err)
+	}
+
+	switch kind {
+	case "vm":
+		vm, err := node.VirtualMachine(ctx, vmid)
+		if err != nil {
+			return nil, fmt.Errorf("get VM %d on node %q for snapshots: %w", vmid, nodeName, err)
+		}
+
+		snapshots, err := vm.Snapshots(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("list VM %d snapshots on node %q: %w", vmid, nodeName, err)
+		}
+
+		return lo.Map(snapshots, func(snapshot *proxmoxlib.VirtualMachineSnapshot, _ int) *Snapshot {
+			return vmSnapshotSummary(snapshot)
+		}), nil
+	case "container":
+		container, err := node.Container(ctx, vmid)
+		if err != nil {
+			return nil, fmt.Errorf("get container %d on node %q for snapshots: %w", vmid, nodeName, err)
+		}
+
+		snapshots, err := container.Snapshots(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("list container %d snapshots on node %q: %w", vmid, nodeName, err)
+		}
+
+		return lo.Map(snapshots, func(snapshot *proxmoxlib.ContainerSnapshot, _ int) *Snapshot {
+			return containerSnapshotSummary(snapshot)
+		}), nil
+	default:
+		return nil, fmt.Errorf("unsupported snapshot kind %q: expected \"vm\" or \"container\"", kind)
+	}
+}
+
 func (c *Client) ListStorage(ctx context.Context) ([]*Storage, error) {
 	nodeStatuses, err := c.proxmox.Nodes(ctx)
 	if err != nil {
@@ -186,6 +248,70 @@ func (c *Client) ListStorage(ctx context.Context) ([]*Storage, error) {
 	}
 
 	return storages, nil
+}
+
+func (c *Client) ListNetworks(ctx context.Context, ifaceType string) ([]*Network, error) {
+	nodeStatuses, err := c.proxmox.Nodes(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list nodes for networks: %w", err)
+	}
+
+	networks := make([]*Network, 0)
+	for _, nodeStatus := range nodeStatuses {
+		nodeNetworks, err := c.ListNodeNetworks(ctx, nodeStatus.Node, ifaceType)
+		if err != nil {
+			return nil, err
+		}
+		networks = append(networks, nodeNetworks...)
+	}
+
+	return networks, nil
+}
+
+func (c *Client) ListNodeNetworks(ctx context.Context, nodeName, ifaceType string) ([]*Network, error) {
+	if nodeName == "" {
+		return nil, fmt.Errorf("node name is required")
+	}
+
+	node, err := c.proxmox.Node(ctx, nodeName)
+	if err != nil {
+		return nil, fmt.Errorf("get node %q: %w", nodeName, err)
+	}
+
+	var rawNetworks proxmoxlib.NodeNetworks
+	if ifaceType != "" {
+		rawNetworks, err = node.Networks(ctx, ifaceType)
+	} else {
+		rawNetworks, err = node.Networks(ctx)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("list networks on node %q: %w", nodeName, err)
+	}
+
+	return lo.Map(rawNetworks, func(network *proxmoxlib.NodeNetwork, _ int) *Network {
+		return networkSummary(network)
+	}), nil
+}
+
+func (c *Client) ListClusterResources(ctx context.Context, filter string) ([]*ClusterResource, error) {
+	cluster, err := c.proxmox.Cluster(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("get cluster: %w", err)
+	}
+
+	var resources proxmoxlib.ClusterResources
+	if filter != "" {
+		resources, err = cluster.Resources(ctx, filter)
+	} else {
+		resources, err = cluster.Resources(ctx)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("list cluster resources: %w", err)
+	}
+
+	return lo.Map(resources, func(resource *proxmoxlib.ClusterResource, _ int) *ClusterResource {
+		return clusterResourceSummary(resource)
+	}), nil
 }
 
 func (c *Client) ListTasks(ctx context.Context) ([]*Task, error) {
@@ -319,6 +445,20 @@ func vmDetails(vm *proxmoxlib.VirtualMachine) *VMDetails {
 	return details
 }
 
+func vmSnapshotSummary(snapshot *proxmoxlib.VirtualMachineSnapshot) *Snapshot {
+	return &Snapshot{
+		Kind:        "vm",
+		Node:        snapshot.Node,
+		VMID:        snapshot.VMID,
+		Name:        snapshot.Name,
+		Description: snapshot.Description,
+		Parent:      snapshot.Parent,
+		SnapTimeSec: snapshot.Snaptime,
+		VMState:     snapshot.Vmstate == 1,
+		SnapState:   snapshot.Snapstate,
+	}
+}
+
 func containerSummary(container *proxmoxlib.Container) *Container {
 	return &Container{
 		Node:    container.Node,
@@ -367,6 +507,18 @@ func containerDetails(container *proxmoxlib.Container) *ContainerDetails {
 	return details
 }
 
+func containerSnapshotSummary(snapshot *proxmoxlib.ContainerSnapshot) *Snapshot {
+	return &Snapshot{
+		Kind:        "container",
+		Node:        snapshot.Node,
+		VMID:        snapshot.VMID,
+		Name:        snapshot.Name,
+		Description: snapshot.Description,
+		Parent:      snapshot.Parent,
+		SnapTimeSec: snapshot.SnapshotCreationTime,
+	}
+}
+
 func storageSummary(storage *proxmoxlib.Storage) *Storage {
 	return &Storage{
 		Node:         storage.Node,
@@ -380,6 +532,54 @@ func storageSummary(storage *proxmoxlib.Storage) *Storage {
 		Avail:        storage.Avail,
 		Used:         storage.Used,
 		Total:        storage.Total,
+	}
+}
+
+func networkSummary(network *proxmoxlib.NodeNetwork) *Network {
+	return &Network{
+		Node:            network.Node,
+		Iface:           network.Iface,
+		Type:            network.Type,
+		Active:          int(network.Active) == 1,
+		Autostart:       network.Autostart == 1,
+		Address:         network.Address,
+		Address6:        network.Address6,
+		CIDR:            network.CIDR,
+		CIDR6:           network.CIDR6,
+		Gateway:         network.Gateway,
+		Gateway6:        network.Gateway6,
+		BridgePorts:     network.BridgePorts,
+		BridgeVLANAware: network.BridgeVLANAware == 1,
+		VLANID:          network.VLANID,
+		VLANRawDevice:   network.VLANRawDevice,
+		MTU:             network.MTU,
+		Method:          network.Method,
+		Method6:         network.Method6,
+		Comments:        network.Comments,
+	}
+}
+
+func clusterResourceSummary(resource *proxmoxlib.ClusterResource) *ClusterResource {
+	return &ClusterResource{
+		ID:         resource.ID,
+		Type:       resource.Type,
+		Node:       resource.Node,
+		VMID:       int(resource.VMID),
+		Name:       resource.Name,
+		Status:     resource.Status,
+		Pool:       resource.Pool,
+		Content:    resource.Content,
+		Storage:    resource.Storage,
+		CPU:        resource.CPU,
+		MaxCPU:     int(resource.MaxCPU),
+		Mem:        resource.Mem,
+		MaxMem:     resource.MaxMem,
+		Disk:       resource.Disk,
+		MaxDisk:    resource.MaxDisk,
+		Uptime:     resource.Uptime,
+		Template:   resource.Template == 1,
+		Tags:       resource.Tags,
+		PluginType: resource.PluginType,
 	}
 }
 
