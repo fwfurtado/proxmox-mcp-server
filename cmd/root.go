@@ -23,20 +23,26 @@ package cmd
 
 import (
 	"os"
+	"strconv"
 
+	"github.com/fwfurtado/proxmox-mcp-server/internal/app"
+	"github.com/fwfurtado/proxmox-mcp-server/internal/proxmox"
 	"github.com/spf13/cobra"
 )
 
-
+var readOnly bool
+var transport string
+var httpAddr string
+var proxmoxConfig proxmox.Config
 
 // rootCmd represents the base command when called without any subcommands
 var rootCmd = &cobra.Command{
 	Use:   "proxmox-mcp-server",
 	Short: "A proxmox mcp server",
-	Long: `A proxmox mcp server`,
-	// Uncomment the following line if your bare application
-	// has an action associated with it:
-	// Run: func(cmd *cobra.Command, args []string) { },
+	Long:  `A proxmox mcp server`,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return runServer(cmd)
+	},
 }
 
 // Execute adds all child commands to the root command and sets flags appropriately.
@@ -49,13 +55,49 @@ func Execute() {
 }
 
 func init() {
-	// Here you will define your flags and configuration settings.
-	// Cobra supports persistent flags, which, if defined here,
-	// will be global for your application.
+	rootCmd.PersistentFlags().BoolVar(&readOnly, "read-only", false, "start the MCP server with only read-only tools enabled")
+	rootCmd.PersistentFlags().StringVar(&transport, "transport", app.TransportStdio, "MCP transport: stdio or streamable-http (env: MCP_TRANSPORT)")
+	rootCmd.PersistentFlags().StringVar(&httpAddr, "http-addr", ":8080", "listen address for streamable-http transport (env: MCP_HTTP_ADDR)")
+	rootCmd.PersistentFlags().StringVar(&proxmoxConfig.URL, "proxmox-url", "", "Proxmox API URL (env: PROXMOX_URL)")
+	rootCmd.PersistentFlags().StringVar(&proxmoxConfig.TokenID, "proxmox-token-id", "", "Proxmox API token ID, for example root@pam!mcp (env: PROXMOX_TOKEN_ID)")
+	rootCmd.PersistentFlags().StringVar(&proxmoxConfig.TokenSecret, "proxmox-token-secret", "", "Proxmox API token secret (env: PROXMOX_TOKEN_SECRET)")
+	rootCmd.PersistentFlags().BoolVar(&proxmoxConfig.InsecureTLS, "proxmox-insecure-tls", false, "skip Proxmox TLS certificate verification (env: PROXMOX_INSECURE_TLS)")
+}
 
-	// rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is $HOME/.proxmox-mcp-server.yaml)")
+func runServer(cmd *cobra.Command) error {
+	return app.Run(cmd.Context(), app.Config{
+		ReadOnly:  readOnly,
+		Transport: stringFlagFromEnv(cmd, "transport", transport, "MCP_TRANSPORT"),
+		HTTPAddr:  stringFlagFromEnv(cmd, "http-addr", httpAddr, "MCP_HTTP_ADDR"),
+		Proxmox:   proxmoxConfigFromEnv(proxmoxConfig),
+	})
+}
 
-	// Cobra also supports local flags, which will only run
-	// when this action is called directly.
-	rootCmd.Flags().BoolP("toggle", "t", false, "Help message for toggle")
+func proxmoxConfigFromEnv(config proxmox.Config) proxmox.Config {
+	if config.URL == "" {
+		config.URL = os.Getenv("PROXMOX_URL")
+	}
+
+	if config.TokenID == "" {
+		config.TokenID = os.Getenv("PROXMOX_TOKEN_ID")
+	}
+	if config.TokenSecret == "" {
+		config.TokenSecret = os.Getenv("PROXMOX_TOKEN_SECRET")
+	}
+	if !config.InsecureTLS {
+		config.InsecureTLS, _ = strconv.ParseBool(os.Getenv("PROXMOX_INSECURE_TLS"))
+	}
+
+	return config
+}
+
+func stringFlagFromEnv(cmd *cobra.Command, flagName, value, envName string) string {
+	if cmd.Flags().Changed(flagName) {
+		return value
+	}
+	if envValue := os.Getenv(envName); envValue != "" {
+		return envValue
+	}
+
+	return value
 }
