@@ -35,6 +35,16 @@ func runStreamableHTTPTransport(ctx context.Context, server *sdkmcp.Server, addr
 		defer cancel()
 
 		if err := httpServer.Shutdown(shutdownCtx); err != nil {
+			if errors.Is(err, context.DeadlineExceeded) {
+				logger.Warn("MCP streamable HTTP transport graceful shutdown timed out; forcing close", "error", err)
+				if closeErr := httpServer.Close(); closeErr != nil && !errors.Is(closeErr, http.ErrServerClosed) {
+					logger.Error("MCP streamable HTTP transport forced close failed", "error", closeErr)
+					return closeErr
+				}
+
+				return nil
+			}
+
 			logger.Error("MCP streamable HTTP transport shutdown failed", "error", err)
 			return err
 		}

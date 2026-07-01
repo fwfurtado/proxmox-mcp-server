@@ -3,6 +3,7 @@ package proxmox
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"sort"
 	"time"
 
@@ -386,6 +387,47 @@ func (c *Client) GetTask(ctx context.Context, upid string, logStart, logLimit in
 	}, nil
 }
 
+func (c *Client) StartVM(ctx context.Context, nodeName string, vmid int) (*Task, error) {
+	return c.vmAction(ctx, nodeName, vmid, "start")
+}
+
+func (c *Client) StopVM(ctx context.Context, nodeName string, vmid int) (*Task, error) {
+	return c.vmAction(ctx, nodeName, vmid, "stop")
+}
+
+func (c *Client) ShutdownVM(ctx context.Context, nodeName string, vmid int) (*Task, error) {
+	return c.vmAction(ctx, nodeName, vmid, "shutdown")
+}
+
+func (c *Client) RebootVM(ctx context.Context, nodeName string, vmid int) (*Task, error) {
+	return c.vmAction(ctx, nodeName, vmid, "reboot")
+}
+
+func (c *Client) ResetVM(ctx context.Context, nodeName string, vmid int) (*Task, error) {
+	return c.vmAction(ctx, nodeName, vmid, "reset")
+}
+
+func (c *Client) StartContainer(ctx context.Context, nodeName string, vmid int) (*Task, error) {
+	return c.containerAction(ctx, nodeName, vmid, "start", nil)
+}
+
+func (c *Client) StopContainer(ctx context.Context, nodeName string, vmid int) (*Task, error) {
+	return c.containerAction(ctx, nodeName, vmid, "stop", nil)
+}
+
+func (c *Client) RebootContainer(ctx context.Context, nodeName string, vmid int) (*Task, error) {
+	return c.containerAction(ctx, nodeName, vmid, "reboot", nil)
+}
+
+func (c *Client) ShutdownContainer(ctx context.Context, nodeName string, vmid int, force bool, timeout int) (*Task, error) {
+	payload := map[string]interface{}{
+		"forceStop": force,
+		"timeout":   timeout,
+	}
+
+	return c.containerAction(ctx, nodeName, vmid, "shutdown", payload)
+}
+
 func vmSummary(vm *proxmoxlib.VirtualMachine) *VM {
 	return &VM{
 		Node:     vm.Node,
@@ -627,4 +669,56 @@ func taskLogLines(log proxmoxlib.Log) []string {
 	}
 
 	return result
+}
+
+func (c *Client) vmAction(ctx context.Context, nodeName string, vmid int, action string) (*Task, error) {
+	if nodeName == "" {
+		return nil, fmt.Errorf("node name is required")
+	}
+	if vmid <= 0 {
+		return nil, fmt.Errorf("vmid must be greater than zero")
+	}
+	if action == "" {
+		return nil, fmt.Errorf("action is required")
+	}
+
+	var upid proxmoxlib.UPID
+	path := fmt.Sprintf("/nodes/%s/qemu/%d/status/%s", nodeName, vmid, action)
+	if err := c.proxmox.Post(ctx, path, nil, &upid); err != nil {
+		return nil, fmt.Errorf("%s VM %d on node %q: %w", action, vmid, nodeName, err)
+	}
+
+	task := proxmoxlib.NewTask(upid, c.proxmox)
+	if task == nil {
+		return nil, fmt.Errorf("%s VM %d on node %q: task was not created", action, vmid, nodeName)
+	}
+
+	slog.Default().Info("started proxmox VM action", "action", action, "node", nodeName, "vmid", vmid, "upid", upid)
+	return taskSummary(task), nil
+}
+
+func (c *Client) containerAction(ctx context.Context, nodeName string, vmid int, action string, payload map[string]interface{}) (*Task, error) {
+	if nodeName == "" {
+		return nil, fmt.Errorf("node name is required")
+	}
+	if vmid <= 0 {
+		return nil, fmt.Errorf("vmid must be greater than zero")
+	}
+	if action == "" {
+		return nil, fmt.Errorf("action is required")
+	}
+
+	var upid proxmoxlib.UPID
+	path := fmt.Sprintf("/nodes/%s/lxc/%d/status/%s", nodeName, vmid, action)
+	if err := c.proxmox.Post(ctx, path, payload, &upid); err != nil {
+		return nil, fmt.Errorf("%s container %d on node %q: %w", action, vmid, nodeName, err)
+	}
+
+	task := proxmoxlib.NewTask(upid, c.proxmox)
+	if task == nil {
+		return nil, fmt.Errorf("%s container %d on node %q: task was not created", action, vmid, nodeName)
+	}
+
+	slog.Default().Info("started proxmox container action", "action", action, "node", nodeName, "vmid", vmid, "upid", upid)
+	return taskSummary(task), nil
 }

@@ -380,3 +380,88 @@ func TestGetVMConfigValidatesInput(t *testing.T) {
 		t.Fatalf("expected node name validation error, got %v", err)
 	}
 }
+
+func TestVMPowerActionsValidateInput(t *testing.T) {
+	client := &Client{}
+
+	tests := []struct {
+		name string
+		fn   func() (*Task, error)
+		want string
+	}{
+		{
+			name: "start vm missing node",
+			fn:   func() (*Task, error) { return client.StartVM(context.Background(), "", 101) },
+			want: "node name is required",
+		},
+		{
+			name: "stop vm invalid vmid",
+			fn:   func() (*Task, error) { return client.StopVM(context.Background(), "pve", 0) },
+			want: "vmid must be greater than zero",
+		},
+		{
+			name: "shutdown vm missing node",
+			fn:   func() (*Task, error) { return client.ShutdownVM(context.Background(), "", 101) },
+			want: "node name is required",
+		},
+		{
+			name: "reboot vm invalid vmid",
+			fn:   func() (*Task, error) { return client.RebootVM(context.Background(), "pve", -1) },
+			want: "vmid must be greater than zero",
+		},
+		{
+			name: "reset vm invalid vmid",
+			fn:   func() (*Task, error) { return client.ResetVM(context.Background(), "pve", -1) },
+			want: "vmid must be greater than zero",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := tt.fn()
+			if err == nil || err.Error() != tt.want {
+				t.Fatalf("expected %q, got %v", tt.want, err)
+			}
+		})
+	}
+}
+
+func TestContainerPowerActionsValidateInput(t *testing.T) {
+	client := &Client{}
+
+	tests := []struct {
+		name string
+		fn   func() (*Task, error)
+		want string
+	}{
+		{
+			name: "start container missing node",
+			fn:   func() (*Task, error) { return client.StartContainer(context.Background(), "", 201) },
+			want: "node name is required",
+		},
+		{
+			name: "stop container invalid vmid",
+			fn:   func() (*Task, error) { return client.StopContainer(context.Background(), "pve", 0) },
+			want: "vmid must be greater than zero",
+		},
+		{
+			name: "shutdown container missing node",
+			fn:   func() (*Task, error) { return client.ShutdownContainer(context.Background(), "", 201, false, 0) },
+			want: "node name is required",
+		},
+		{
+			name: "reboot container invalid vmid",
+			fn:   func() (*Task, error) { return client.RebootContainer(context.Background(), "pve", -1) },
+			want: "vmid must be greater than zero",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := tt.fn()
+			if err == nil || err.Error() != tt.want {
+				t.Fatalf("expected %q, got %v", tt.want, err)
+			}
+		})
+	}
+}

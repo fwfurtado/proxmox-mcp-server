@@ -9,6 +9,7 @@ import (
 
 	"github.com/fwfurtado/proxmox-mcp-server/internal/proxmox"
 	"github.com/fwfurtado/proxmox-mcp-server/internal/tools/readonly"
+	"github.com/fwfurtado/proxmox-mcp-server/internal/tools/readwrite"
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -33,10 +34,6 @@ func Run(ctx context.Context, config Config) error {
 
 	logger.Info("starting proxmox MCP server", "allow_write", config.AllowWrite, "transport", config.Transport)
 
-	if config.AllowWrite {
-		return fmt.Errorf("read-write mode is not implemented yet; omit --allow-write to run read-only")
-	}
-
 	if err := validateTransport(config.Transport); err != nil {
 		return err
 	}
@@ -54,6 +51,9 @@ func Run(ctx context.Context, config Config) error {
 	}, nil)
 
 	readonly.RegisterTools(server, proxmoxClient)
+	if config.AllowWrite {
+		readwrite.RegisterTools(server, proxmoxClient)
+	}
 
 	if err := runTransport(ctx, server, config, logger); err != nil {
 		return err
